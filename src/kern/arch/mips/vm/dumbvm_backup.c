@@ -63,60 +63,11 @@
  * Wrap ram_stealmem in a spinlock.
  */
 static struct spinlock stealmem_lock = SPINLOCK_INITIALIZER;
-static struct spinlock memmap_lock = SPINLOCK_INITIALIZER;
-static unsigned int *free_pages = NULL; //used as bitmap
-static unsigned int *size_pages = NULL; // vector of slot sizes
-static unsigned int num_frames_vm;
-static paddr_t firstfree;
-static unsigned short use_vm = 0;
-
-static unsigned short getBit(unsigned int *bitmap, unsigned int index){
-	unsigned char bit = 0;
-	bit = (unsigned char) ((bitmap[index / 32] & (1 << (index % 32))) != 0 ? 1 : 0);
-	return bit;
-}
-
-static void setBit(unsigned int *bitmap, unsigned int index, unsigned char value){
-	unsigned char bit = 0;
-	if (value != 0)
-		bit = 1;
-	if (bit == 1){
-		bitmap[index / 32] |= (1 << (index % 32));
-	}
-	else{
-		bitmap[index / 32] &= ~(1 << (index % 32));
-	}
-}
-
-static unsigned short vm_active(){
-	short active;
-	spinlock_acquire(&memmap_lock);
-	active = use_vm;
-	spinlock_release(&memmap_lock);
-	return active;
-}
 
 void
-vm_bootstrap(void) {
-	unsigned int i, num_occ_pages;
-	num_frames_vm = ram_getsize() / PAGE_SIZE;
-	free_pages = (unsigned int *) kmalloc(sizeof(unsigned int) * (num_frames_vm/32 + num_frames_vm%32==0 ? 0 : 1));
-	size_pages = (unsigned int *) kmalloc(sizeof(unsigned int) * (num_frames_vm));
-	firstfree = ram_getfirstfree();
-	num_occ_pages = firstfree / PAGE_SIZE + (firstfree % PAGE_SIZE == 0 ? 0 : 1);
-	for (i = 0; i < num_frames_vm/32 + 1; i++) {
-		free_pages[i] = 0xFFFFFFFF;
-	}
-	for (i = 0; i < num_frames_vm; i++) {
-		size_pages[i] = 0;
-	}
-	for (i = 0; i < num_occ_pages; i++) {
-		setBit(free_pages, i, 0);
-	}
-	size_pages[0] = num_occ_pages;
-	spinlock_acquire(&memmap_lock);
-	use_vm = 1;
-	spinlock_release(&memmap_lock);
+vm_bootstrap(void)
+{
+	/* Do nothing. */
 }
 
 /*
@@ -139,92 +90,24 @@ dumbvm_can_sleep(void)
 	}
 }
 
-/*
- * Find the first free page slot of the required size.
- * Returns 0 if no free page slot is found, 
- * otherwise returns the index + 1 of the free page slot.
- */ 
-static 
-unsigned long 
-find_first_free_slot(unsigned long npages){
-	unsigned int found_index = 0, i, cnt=0;
-	for (i = 0; i < num_frames_vm; i++) {
-		if (getBit(free_pages, i) == 0){
-			// found a used page
-			i += size_pages[i] - 1; // skip the used pages of that slot
-			cnt = 0;
-			found_index = i + 1;
-		}
-		else{
-			// found a free page
-			cnt++;
-			if (cnt == npages){
-				return found_index + 1;
-			}
-		}
-	}
-	return 0;
-}
-
 static
 paddr_t
-getppages(unsigned long npages) {
+getppages(unsigned long npages)
+{
 	paddr_t addr;
-	unsigned long slot_index, i;
 
-	if (vm_active() == 1) {
-		// find first free slot
-		spinlock_acquire(&memmap_lock);
-		slot_index = find_first_free_slot(npages);
-		if (slot_index == 0){
-			spinlock_release(&memmap_lock);
-			return 0;
-		}
-		slot_index--;
-		// mark as used
-		for (i = 0; i < npages; i++){
-			setBit(free_pages, slot_index + i, 0);
-		}
-		size_pages[slot_index] = npages;
-		addr = (paddr_t) firstfree + (slot_index * PAGE_SIZE);
-		spinlock_release(&memmap_lock);
-	}
-	else {
-		spinlock_acquire(&stealmem_lock);
-		addr = ram_stealmem(npages);
-		spinlock_release(&stealmem_lock);
-	}
+	spinlock_acquire(&stealmem_lock);
+
+	addr = ram_stealmem(npages);
+
+	spinlock_release(&stealmem_lock);
 	return addr;
-}
-
-/*
- * free the page-slot that owns the given page
- */
-static 
-int 
-freeppages(paddr_t addr) {
-	unsigned long slot_index, i;
-	unsigned int npages;
-
-	if (vm_active() == 1) {
-		slot_index = (addr - firstfree) / PAGE_SIZE;
-		spinlock_acquire(&memmap_lock);
-		while (size_pages[slot_index] == 0) slot_index--;
-		npages = size_pages[slot_index];
-		for (i = 0; i < npages; i++){
-			setBit(free_pages, slot_index + i, 1);
-		}
-		size_pages[slot_index] = 0;
-		spinlock_release(&memmap_lock);
-		return 0;
-	}
-
-	return 1;
 }
 
 /* Allocate/free some kernel-space virtual pages */
 vaddr_t
-alloc_kpages(unsigned npages) {
+alloc_kpages(unsigned npages)
+{
 	paddr_t pa;
 
 	dumbvm_can_sleep();
@@ -236,9 +119,11 @@ alloc_kpages(unsigned npages) {
 }
 
 void
-free_kpages(vaddr_t addr) {
-	paddr_t paddr = addr - MIPS_KSEG0;
-	freeppages(paddr);
+free_kpages(vaddr_t addr)
+{
+	/* nothing - leak the memory. */
+
+	(void)addr;
 }
 
 void
@@ -372,9 +257,6 @@ void
 as_destroy(struct addrspace *as)
 {
 	dumbvm_can_sleep();
-	freeppages(as->as_pbase1);
-	freeppages(as->as_pbase2);
-	freeppages(as->as_stackpbase);
 	kfree(as);
 }
 
