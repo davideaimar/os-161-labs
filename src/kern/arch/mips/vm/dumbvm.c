@@ -67,6 +67,8 @@ static struct spinlock memmap_lock = SPINLOCK_INITIALIZER;
 static unsigned int *free_pages = NULL; //used as bitmap
 static unsigned int *size_pages = NULL; // vector of slot sizes
 static unsigned int num_frames_vm;
+static unsigned int num_frames_allocated;
+static unsigned int num_frames_init_allocated;
 static paddr_t firstfree;
 static unsigned short use_vm = 0;
 
@@ -98,22 +100,23 @@ static unsigned short vm_active(){
 
 void
 vm_bootstrap(void) {
-	unsigned int i, num_occ_pages;
+	unsigned int i;
 	num_frames_vm = ram_getsize() / PAGE_SIZE;
 	free_pages = (unsigned int *) kmalloc(sizeof(unsigned int) * (num_frames_vm/32 + num_frames_vm%32==0 ? 0 : 1));
 	size_pages = (unsigned int *) kmalloc(sizeof(unsigned int) * (num_frames_vm));
 	firstfree = ram_getfirstfree();
-	num_occ_pages = firstfree / PAGE_SIZE + (firstfree % PAGE_SIZE == 0 ? 0 : 1);
+	num_frames_init_allocated = firstfree / PAGE_SIZE + (firstfree % PAGE_SIZE == 0 ? 0 : 1);
 	for (i = 0; i < num_frames_vm/32 + 1; i++) {
 		free_pages[i] = 0xFFFFFFFF;
 	}
 	for (i = 0; i < num_frames_vm; i++) {
 		size_pages[i] = 0;
 	}
-	for (i = 0; i < num_occ_pages; i++) {
+	for (i = 0; i < num_frames_init_allocated; i++) {
 		setBit(free_pages, i, 0);
 	}
-	size_pages[0] = num_occ_pages;
+	size_pages[0] = num_frames_init_allocated;
+	num_frames_allocated = num_frames_init_allocated;
 	spinlock_acquire(&memmap_lock);
 	use_vm = 1;
 	spinlock_release(&memmap_lock);
@@ -186,8 +189,9 @@ getppages(unsigned long npages) {
 			setBit(free_pages, slot_index + i, 0);
 		}
 		size_pages[slot_index] = npages;
-		addr = (paddr_t) firstfree + (slot_index * PAGE_SIZE);
 		spinlock_release(&memmap_lock);
+		addr = (paddr_t) firstfree + (slot_index * PAGE_SIZE);
+		num_frames_allocated += npages;
 	}
 	else {
 		spinlock_acquire(&stealmem_lock);
@@ -216,6 +220,7 @@ freeppages(paddr_t addr) {
 		}
 		size_pages[slot_index] = 0;
 		spinlock_release(&memmap_lock);
+		num_frames_allocated -= npages;
 		return 0;
 	}
 
@@ -232,6 +237,7 @@ alloc_kpages(unsigned npages) {
 	if (pa==0) {
 		return 0;
 	}
+
 	return PADDR_TO_KVADDR(pa);
 }
 
@@ -542,4 +548,13 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 
 	*ret = new;
 	return 0;
+}
+
+void
+dumbvm_printstats(void){
+	kprintf("dumbvm: page allocator statistics:\n");
+	kprintf("dumbvm: %d total pages\n", num_frames_vm);
+	kprintf("dumbvm: %d pages allocated\n", num_frames_allocated);
+	kprintf("dumbvm: %d pages free\n", num_frames_vm - num_frames_allocated);
+	kprintf("dumbvm: %d pages were allocated before VM bootstrap\n", num_frames_init_allocated);
 }
