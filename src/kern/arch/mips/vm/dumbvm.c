@@ -64,33 +64,45 @@
  */
 static struct spinlock stealmem_lock = SPINLOCK_INITIALIZER;
 static struct spinlock memmap_lock = SPINLOCK_INITIALIZER;
-static unsigned int *free_pages = NULL; //used as bitmap
-static unsigned int *size_pages = NULL; // vector of slot sizes
-static unsigned int num_frames_vm;
-static unsigned int num_frames_allocated;
-static unsigned int num_frames_init_allocated;
+//static unsigned int *free_pages = NULL; 
+
+/* Map of the memory: 
+ *  - bit 0 is page free/not free
+ *  - bit 1..31 is the slot size if page is the starting one, 0 otherwise
+ * Access it only with memmap_lock and using the appropriate methods
+ */
+static __u32 *mem_map = NULL;  
+static size_t num_frames_vm;
+static size_t num_frames_allocated;
+static size_t num_frames_init_allocated;
 static paddr_t firstfree;
-static unsigned short use_vm = 0;
+static bool use_vm = false;
 
-static unsigned short getBit(unsigned int *bitmap, unsigned int index){
-	unsigned char bit = 0;
-	bit = (unsigned char) ((bitmap[index / 32] & (1 << (index % 32))) != 0 ? 1 : 0);
-	return bit;
+static bool get_page_free(size_t page_index) {
+	KASSERT(page_index < num_frames_vm);
+	return (mem_map[page_index] & 1);
 }
 
-static void setBit(unsigned int *bitmap, unsigned int index, unsigned char value){
-	unsigned char bit = 0;
-	if (value != 0)
-		bit = 1;
-	if (bit == 1){
-		bitmap[index / 32] |= (1 << (index % 32));
-	}
-	else{
-		bitmap[index / 32] &= ~(1 << (index % 32));
-	}
+static void set_page_free(size_t page_index, bool free) {
+	KASSERT(page_index < num_frames_vm);
+	free = free == 0 ? 0 : 1; // force to 0 or 1
+	mem_map[page_index] = (mem_map[page_index] & ~1) | free;
 }
 
-static unsigned short vm_active(){
+static size_t get_slot_size(size_t page_index) {
+	KASSERT(page_index < num_frames_vm);
+	return (size_t)((mem_map[page_index] & 0xFFFFFFFE) >> 1);
+}
+
+static void set_slot_size(size_t page_index, size_t size) {
+	KASSERT(page_index < num_frames_vm);
+	KASSERT(size < 0x80000000);
+	// set bit 1..31 to size
+	size = size << 1;
+	mem_map[page_index] = (mem_map[page_index] & ~0xFFFFFFFE) | size;
+}
+
+static bool vm_active(){
 	short active;
 	spinlock_acquire(&memmap_lock);
 	active = use_vm;
@@ -100,22 +112,28 @@ static unsigned short vm_active(){
 
 void
 vm_bootstrap(void) {
-	unsigned int i;
+	size_t i;
+	if (vm_active()) return;
 	num_frames_vm = ram_getsize() / PAGE_SIZE;
-	free_pages = (unsigned int *) kmalloc(sizeof(unsigned int) * (num_frames_vm/32 + num_frames_vm%32==0 ? 0 : 1));
-	size_pages = (unsigned int *) kmalloc(sizeof(unsigned int) * (num_frames_vm));
-	firstfree = ram_getfirstfree();
+	mem_map = (__u32 *) kmalloc(sizeof(__u32) * num_frames_vm);
+	if (mem_map == NULL) {
+		panic("vm_bootstrap: kmalloc failed\n");
+	}
+	firstfree = ram_getfirstfree(); // from this moment we can't use ram_stealmem
 	num_frames_init_allocated = firstfree / PAGE_SIZE + (firstfree % PAGE_SIZE == 0 ? 0 : 1);
-	for (i = 0; i < num_frames_vm/32 + 1; i++) {
-		free_pages[i] = 0xFFFFFFFF;
-	}
+	// initialize the memory map
 	for (i = 0; i < num_frames_vm; i++) {
-		size_pages[i] = 0;
+		if (i < num_frames_init_allocated) {
+			set_page_free(i, false);
+			if ( i== 0 )
+				set_slot_size(i, num_frames_init_allocated);
+			else
+				set_slot_size(i, 0);
+		} else {
+			set_page_free(i, true);
+			set_slot_size(i, 0);
+		}
 	}
-	for (i = 0; i < num_frames_init_allocated; i++) {
-		setBit(free_pages, i, 0);
-	}
-	size_pages[0] = num_frames_init_allocated;
 	num_frames_allocated = num_frames_init_allocated;
 	spinlock_acquire(&memmap_lock);
 	use_vm = 1;
@@ -144,53 +162,51 @@ dumbvm_can_sleep(void)
 
 /*
  * Find the first free page slot of the required size.
- * Returns 0 if no free page slot is found, 
- * otherwise returns the index + 1 of the free page slot.
+ * Returns 0 (reserved address) if no free page slot is found, 
+ * otherwise returns the index of the free page slot.
  */ 
 static 
-unsigned long 
-find_first_free_slot(unsigned long npages){
-	unsigned int found_index = 0, i, cnt=0;
-	for (i = 0; i < num_frames_vm; i++) {
-		if (getBit(free_pages, i) == 0){
-			// found a used page
-			i += size_pages[i] - 1; // skip the used pages of that slot
+size_t 
+find_first_free_slot(size_t npages){
+	size_t found_index=0, i=0, cnt=0;
+
+	do {
+		if (get_slot_size(i) != 0) {
+			i += get_slot_size(i);
+			found_index = i;
 			cnt = 0;
-			found_index = i + 1;
-		}
-		else{
-			// found a free page
+		} else {
 			cnt++;
-			if (cnt == npages){
-				return found_index + 1;
-			}
+			i++;
 		}
-	}
+	} while (cnt < npages && i < num_frames_vm);
+	
+	if (cnt == npages)
+		return found_index;
 	return 0;
 }
 
 static
 paddr_t
-getppages(unsigned long npages) {
+getppages(size_t npages) {
 	paddr_t addr;
-	unsigned long slot_index, i;
+	size_t first_page_index, i;
 
-	if (vm_active() == 1) {
+	if (vm_active()) {
 		// find first free slot
 		spinlock_acquire(&memmap_lock);
-		slot_index = find_first_free_slot(npages);
-		if (slot_index == 0){
+		first_page_index = find_first_free_slot(npages);
+		if (first_page_index == 0){
 			spinlock_release(&memmap_lock);
 			return 0;
 		}
-		slot_index--;
 		// mark as used
 		for (i = 0; i < npages; i++){
-			setBit(free_pages, slot_index + i, 0);
+			set_page_free(first_page_index + i, false);
 		}
-		size_pages[slot_index] = npages;
+		set_slot_size(first_page_index, npages);
 		spinlock_release(&memmap_lock);
-		addr = (paddr_t) firstfree + (slot_index * PAGE_SIZE);
+		addr = (paddr_t) (first_page_index * PAGE_SIZE);
 		num_frames_allocated += npages;
 	}
 	else {
@@ -202,23 +218,24 @@ getppages(unsigned long npages) {
 }
 
 /*
- * free the page-slot that owns the given page
+ * free all the page-slot that owns the given page
  */
 static 
 int 
 freeppages(paddr_t addr) {
-	unsigned long slot_index, i;
-	unsigned int npages;
-
-	if (vm_active() == 1) {
-		slot_index = (addr - firstfree) / PAGE_SIZE;
+	size_t slot_index, i, npages;
+	// currently there aren't priviledge checks
+	// if vm is active, the page is used and the address is valid
+	if (vm_active() && get_page_free(addr / PAGE_SIZE) == 0 && addr >= firstfree && addr < num_frames_vm * PAGE_SIZE) {
+		slot_index = addr / PAGE_SIZE;
 		spinlock_acquire(&memmap_lock);
-		while (size_pages[slot_index] == 0) slot_index--;
-		npages = size_pages[slot_index];
+		// go to the first page of the slot
+		while (get_slot_size(slot_index) == 0) slot_index--;
+		npages = get_slot_size(slot_index);
 		for (i = 0; i < npages; i++){
-			setBit(free_pages, slot_index + i, 1);
+			set_page_free(slot_index + i, false);
 		}
-		size_pages[slot_index] = 0;
+		set_slot_size(slot_index, 0);
 		spinlock_release(&memmap_lock);
 		num_frames_allocated -= npages;
 		return 0;
@@ -557,4 +574,21 @@ dumbvm_printstats(void){
 	kprintf("dumbvm: %d pages allocated\n", num_frames_allocated);
 	kprintf("dumbvm: %d pages free\n", num_frames_vm - num_frames_allocated);
 	kprintf("dumbvm: %d pages were allocated before VM bootstrap\n", num_frames_init_allocated);
+	kprintf("Memory map\n\n\t");
+	for (size_t i = 0; i < num_frames_vm/16 + (num_frames_vm % 16 != 0 ? 1 : 0) ; i++)
+	{
+		for (size_t j = 0; j < 16; j++)
+		{
+			if (i*16 + j < num_frames_vm)
+			{
+				kprintf("%d", get_page_free(i*16 + j));
+			}
+			else
+			{
+				kprintf("/");
+			}
+		}
+		kprintf("\n\t");
+	}
+	kprintf("\n");
 }
