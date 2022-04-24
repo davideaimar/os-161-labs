@@ -233,7 +233,7 @@ freeppages(paddr_t addr) {
 		while (get_slot_size(slot_index) == 0) slot_index--;
 		npages = get_slot_size(slot_index);
 		for (i = 0; i < npages; i++){
-			set_page_free(slot_index + i, false);
+			set_page_free(slot_index + i, true);
 		}
 		set_slot_size(slot_index, 0);
 		spinlock_release(&memmap_lock);
@@ -574,14 +574,25 @@ dumbvm_printstats(void){
 	kprintf("dumbvm: %d pages allocated\n", num_frames_allocated);
 	kprintf("dumbvm: %d pages free\n", num_frames_vm - num_frames_allocated);
 	kprintf("dumbvm: %d pages were allocated before VM bootstrap\n", num_frames_init_allocated);
-	kprintf("Memory map\n\n\t");
-	for (size_t i = 0; i < num_frames_vm/16 + (num_frames_vm % 16 != 0 ? 1 : 0) ; i++)
+	// calculate the pages for each line to print
+	size_t pages_per_line = 8;
+	if (num_frames_vm > 64) {
+		pages_per_line = 16;
+	}
+	if (num_frames_vm > 128) {
+		pages_per_line = 32;
+	}
+	if (num_frames_vm > 512) {
+		pages_per_line = 64;
+	}
+	kprintf("Memory map, %d pages per line (0=used page, 1=free page)\n\n\t", pages_per_line);
+	for (size_t i = 0; i < num_frames_vm/pages_per_line + (num_frames_vm % pages_per_line != 0 ? 1 : 0) ; i++)
 	{
-		for (size_t j = 0; j < 16; j++)
+		for (size_t j = 0; j < pages_per_line; j++)
 		{
-			if (i*16 + j < num_frames_vm)
+			if (i*pages_per_line + j < num_frames_vm)
 			{
-				kprintf("%d", get_page_free(i*16 + j));
+				kprintf("%d", get_page_free(i*pages_per_line + j));
 			}
 			else
 			{
