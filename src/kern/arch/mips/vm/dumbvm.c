@@ -64,42 +64,47 @@
  */
 static struct spinlock stealmem_lock = SPINLOCK_INITIALIZER;
 static struct spinlock memmap_lock = SPINLOCK_INITIALIZER;
-//static unsigned int *free_pages = NULL; 
-
-/* Map of the memory: 
- *  - bit 0 is page free/not free
- *  - bit 1..31 is the slot size if page is the starting one, 0 otherwise
- * Access it only with memmap_lock and using the appropriate methods
+/* 
+ *	Map of the memory: 
+ *  	- bit 0 is page free/not free
+ *  	- bit 1..15 is the slot size if page is the starting one, 0 otherwise
+ * 	Access it only with memmap_lock and using the appropriate methods
+ * 	max RAM size is 512MB:
+ * 		- page size 8192B:  65536 pages 
+ * 		- page size 4096B: 131072 pages
+ * 		- page size 2048B: 262144 pages
+ * 		- page size 1024B: 524288 pages
+ * 	Max slot size is set to 2^(16-1) - 1 = 32767 pages
  */
-static __u32 *mem_map = NULL;  
-static size_t num_frames_vm;
+static __u16 *mem_map = NULL;  
+static size_t num_frames_total;
 static size_t num_frames_allocated;
 static size_t num_frames_init_allocated;
 static paddr_t firstfree;
 static bool use_vm = false;
 
 static bool get_page_free(size_t page_index) {
-	KASSERT(page_index < num_frames_vm);
+	KASSERT(page_index < num_frames_total);
 	return (mem_map[page_index] & 1);
 }
 
 static void set_page_free(size_t page_index, bool free) {
-	KASSERT(page_index < num_frames_vm);
+	KASSERT(page_index < num_frames_total);
 	free = free == 0 ? 0 : 1; // force to 0 or 1
 	mem_map[page_index] = (mem_map[page_index] & ~1) | free;
 }
 
 static size_t get_slot_size(size_t page_index) {
-	KASSERT(page_index < num_frames_vm);
-	return (size_t)((mem_map[page_index] & 0xFFFFFFFE) >> 1);
+	KASSERT(page_index < num_frames_total);
+	return (size_t)((mem_map[page_index] & 0xFFFE) >> 1);
 }
 
 static void set_slot_size(size_t page_index, size_t size) {
-	KASSERT(page_index < num_frames_vm);
-	KASSERT(size < 0x80000000);
-	// set bit 1..31 to size
+	KASSERT(page_index < num_frames_total);
+	KASSERT(size < 0x8000);
+	// set bit 1..15 to size
 	size = size << 1;
-	mem_map[page_index] = (mem_map[page_index] & ~0xFFFFFFFE) | size;
+	mem_map[page_index] = (mem_map[page_index] & ~0xFFFE) | size;
 }
 
 static bool vm_active(){
@@ -114,15 +119,15 @@ void
 vm_bootstrap(void) {
 	size_t i;
 	if (vm_active()) return;
-	num_frames_vm = ram_getsize() / PAGE_SIZE;
-	mem_map = (__u32 *) kmalloc(sizeof(__u32) * num_frames_vm);
+	num_frames_total = ram_getsize() / PAGE_SIZE;
+	mem_map = (__u16 *) kmalloc(sizeof(__u16) * num_frames_total);
 	if (mem_map == NULL) {
 		panic("vm_bootstrap: kmalloc failed\n");
 	}
 	firstfree = ram_getfirstfree(); // from this moment we can't use ram_stealmem
 	num_frames_init_allocated = firstfree / PAGE_SIZE + (firstfree % PAGE_SIZE == 0 ? 0 : 1);
 	// initialize the memory map
-	for (i = 0; i < num_frames_vm; i++) {
+	for (i = 0; i < num_frames_total; i++) {
 		if (i < num_frames_init_allocated) {
 			set_page_free(i, false);
 			if ( i== 0 )
@@ -179,7 +184,7 @@ find_first_free_slot(size_t npages){
 			cnt++;
 			i++;
 		}
-	} while (cnt < npages && i < num_frames_vm);
+	} while (cnt < npages && i < num_frames_total);
 	
 	if (cnt == npages)
 		return found_index;
@@ -192,7 +197,7 @@ getppages(size_t npages) {
 	paddr_t addr;
 	size_t first_page_index, i;
 
-	if (vm_active()) {
+	if (vm_active() && npages > 0 && npages < 32768) {
 		// find first free slot
 		spinlock_acquire(&memmap_lock);
 		first_page_index = find_first_free_slot(npages);
@@ -226,7 +231,7 @@ freeppages(paddr_t addr) {
 	size_t slot_index, i, npages;
 	// currently there aren't priviledge checks
 	// if vm is active, the page is used and the address is valid
-	if (vm_active() && get_page_free(addr / PAGE_SIZE) == 0 && addr >= firstfree && addr < num_frames_vm * PAGE_SIZE) {
+	if (vm_active() && get_page_free(addr / PAGE_SIZE) == 0 && addr >= firstfree && addr < num_frames_total * PAGE_SIZE) {
 		slot_index = addr / PAGE_SIZE;
 		spinlock_acquire(&memmap_lock);
 		// go to the first page of the slot
@@ -570,27 +575,27 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 void
 dumbvm_printstats(void){
 	kprintf("dumbvm: page allocator statistics:\n");
-	kprintf("dumbvm: %d total pages\n", num_frames_vm);
+	kprintf("dumbvm: %d total pages\n", num_frames_total);
 	kprintf("dumbvm: %d pages allocated\n", num_frames_allocated);
-	kprintf("dumbvm: %d pages free\n", num_frames_vm - num_frames_allocated);
+	kprintf("dumbvm: %d pages free\n", num_frames_total - num_frames_allocated);
 	kprintf("dumbvm: %d pages were allocated before VM bootstrap\n", num_frames_init_allocated);
 	// calculate the pages for each line to print
 	size_t pages_per_line = 8;
-	if (num_frames_vm > 64) {
+	if (num_frames_total > 64) {
 		pages_per_line = 16;
 	}
-	if (num_frames_vm > 128) {
+	if (num_frames_total > 128) {
 		pages_per_line = 32;
 	}
-	if (num_frames_vm > 512) {
+	if (num_frames_total > 512) {
 		pages_per_line = 64;
 	}
 	kprintf("Memory map, %d pages per line (0=used page, 1=free page)\n\n\t", pages_per_line);
-	for (size_t i = 0; i < num_frames_vm/pages_per_line + (num_frames_vm % pages_per_line != 0 ? 1 : 0) ; i++)
+	for (size_t i = 0; i < num_frames_total/pages_per_line + (num_frames_total % pages_per_line != 0 ? 1 : 0) ; i++)
 	{
 		for (size_t j = 0; j < pages_per_line; j++)
 		{
-			if (i*pages_per_line + j < num_frames_vm)
+			if (i*pages_per_line + j < num_frames_total)
 			{
 				kprintf("%d", get_page_free(i*pages_per_line + j));
 			}
