@@ -156,8 +156,9 @@ lock_create(const char *name)
 
 	HANGMAN_LOCKABLEINIT(&lock->lk_hangman, lock->lk_name);
 
+        #ifdef OPT_LOCKS
         // add stuff here as needed
-
+        #endif
         return lock;
 }
 
@@ -166,7 +167,9 @@ lock_destroy(struct lock *lock)
 {
         KASSERT(lock != NULL);
 
+        #ifdef OPT_LOCKS
         // add stuff here as needed
+        #endif
 
         kfree(lock->lk_name);
         kfree(lock);
@@ -178,7 +181,9 @@ lock_acquire(struct lock *lock)
 	/* Call this (atomically) before waiting for a lock */
 	//HANGMAN_WAIT(&curthread->t_hangman, &lock->lk_hangman);
 
-        // Write this
+        #ifdef OPT_LOCKS
+        // add stuff here as needed
+        #endif
 
         (void)lock;  // suppress warning until code gets written
 
@@ -192,7 +197,9 @@ lock_release(struct lock *lock)
 	/* Call this (atomically) when the lock is released */
 	//HANGMAN_RELEASE(&curthread->t_hangman, &lock->lk_hangman);
 
-        // Write this
+        #ifdef OPT_LOCKS
+        // add stuff here as needed
+        #endif
 
         (void)lock;  // suppress warning until code gets written
 }
@@ -200,7 +207,9 @@ lock_release(struct lock *lock)
 bool
 lock_do_i_hold(struct lock *lock)
 {
-        // Write this
+        #ifdef OPT_LOCKS
+        // add stuff here as needed
+        #endif
 
         (void)lock;  // suppress warning until code gets written
 
@@ -228,7 +237,9 @@ cv_create(const char *name)
                 return NULL;
         }
 
+        #ifdef OPT_CONDVARS
         // add stuff here as needed
+        #endif
 
         return cv;
 }
@@ -238,7 +249,9 @@ cv_destroy(struct cv *cv)
 {
         KASSERT(cv != NULL);
 
+        #ifdef OPT_CONDVARS
         // add stuff here as needed
+        #endif
 
         kfree(cv->cv_name);
         kfree(cv);
@@ -247,7 +260,9 @@ cv_destroy(struct cv *cv)
 void
 cv_wait(struct cv *cv, struct lock *lock)
 {
-        // Write this
+        #ifdef OPT_CONDVARS
+        // add stuff here as needed
+        #endif
         (void)cv;    // suppress warning until code gets written
         (void)lock;  // suppress warning until code gets written
 }
@@ -255,7 +270,9 @@ cv_wait(struct cv *cv, struct lock *lock)
 void
 cv_signal(struct cv *cv, struct lock *lock)
 {
-        // Write this
+        #ifdef OPT_CONDVARS
+        // add stuff here as needed
+        #endif
 	(void)cv;    // suppress warning until code gets written
 	(void)lock;  // suppress warning until code gets written
 }
@@ -263,7 +280,9 @@ cv_signal(struct cv *cv, struct lock *lock)
 void
 cv_broadcast(struct cv *cv, struct lock *lock)
 {
-	// Write this
+	#ifdef OPT_CONDVARS
+        // add stuff here as needed
+        #endif
 	(void)cv;    // suppress warning until code gets written
 	(void)lock;  // suppress warning until code gets written
 }
