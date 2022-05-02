@@ -194,25 +194,27 @@ find_first_free_slot(size_t npages){
 static
 paddr_t
 getppages(size_t npages) {
-	paddr_t addr;
+	paddr_t addr = 0;
 	size_t first_page_index, i;
 
-	if (vm_active() && npages > 0 && npages < 32768) {
-		// find first free slot
-		spinlock_acquire(&memmap_lock);
-		first_page_index = find_first_free_slot(npages);
-		if (first_page_index == 0){
+	if (vm_active()) {
+		if (npages > 0 && npages < 32768) {
+			// find first free slot
+			spinlock_acquire(&memmap_lock);
+			first_page_index = find_first_free_slot(npages);
+			if (first_page_index == 0){
+				spinlock_release(&memmap_lock);
+				return 0;
+			}
+			// mark as used
+			for (i = 0; i < npages; i++){
+				set_page_free(first_page_index + i, false);
+			}
+			set_slot_size(first_page_index, npages);
 			spinlock_release(&memmap_lock);
-			return 0;
+			addr = (paddr_t) (first_page_index * PAGE_SIZE);
+			num_frames_allocated += npages;
 		}
-		// mark as used
-		for (i = 0; i < npages; i++){
-			set_page_free(first_page_index + i, false);
-		}
-		set_slot_size(first_page_index, npages);
-		spinlock_release(&memmap_lock);
-		addr = (paddr_t) (first_page_index * PAGE_SIZE);
-		num_frames_allocated += npages;
 	}
 	else {
 		spinlock_acquire(&stealmem_lock);
