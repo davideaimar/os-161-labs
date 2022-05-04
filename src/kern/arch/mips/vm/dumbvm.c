@@ -83,6 +83,9 @@ static size_t num_frames_init_allocated;
 static paddr_t firstfree;
 static bool use_vm = false;
 
+static size_t tot_allocated_pages = 0; // for debugging
+static size_t tot_freed_pages = 0; // for debugging
+
 static bool get_page_free(size_t page_index) {
 	KASSERT(page_index < num_frames_total);
 	return (mem_map[page_index] & 1);
@@ -214,6 +217,7 @@ getppages(size_t npages) {
 			spinlock_release(&memmap_lock);
 			addr = (paddr_t) (first_page_index * PAGE_SIZE);
 			num_frames_allocated += npages;
+			tot_allocated_pages += npages;
 		}
 	}
 	else {
@@ -245,6 +249,7 @@ freeppages(paddr_t addr) {
 		set_slot_size(slot_index, 0);
 		spinlock_release(&memmap_lock);
 		num_frames_allocated -= npages;
+		tot_freed_pages += npages;
 		return 0;
 	}
 
@@ -581,6 +586,8 @@ dumbvm_printstats(void){
 	kprintf("dumbvm: %d pages allocated\n", num_frames_allocated);
 	kprintf("dumbvm: %d pages free\n", num_frames_total - num_frames_allocated);
 	kprintf("dumbvm: %d pages were allocated before VM bootstrap\n", num_frames_init_allocated);
+	kprintf("dumbvm: %d history total allocated paged\n", tot_allocated_pages);
+	kprintf("dumbvm: %d history total de-llocated paged\n", tot_freed_pages);
 	// calculate the pages for each line to print
 	size_t pages_per_line = 8;
 	if (num_frames_total > 64) {
