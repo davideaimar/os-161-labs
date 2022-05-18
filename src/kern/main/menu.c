@@ -139,6 +139,12 @@ common_prog(int nargs, char **args)
 	 * once you write the code for handling that.
 	 */
 
+	#if OPT_PROCWAIT
+		//result = proc_wait(proc);
+		result = sys_waitpid(sys_getpid(proc));
+		kprintf("Process ended with status: %d\n", result);
+	#endif
+
 	return 0;
 }
 

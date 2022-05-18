@@ -457,3 +457,5 @@ optfile   syscalls   syscall/proc_syscalls.c
 
 defoption locks
 defoption condvars
+
+defoption procwait

@@ -48,11 +48,26 @@
 #include <current.h>
 #include <addrspace.h>
 #include <vnode.h>
+#include <limits.h>
+#include <opt-procwait.h>
 
 /*
  * The process for the kernel; this holds all the kernel-only threads.
  */
 struct proc *kproc;
+static struct spinlock pid_lock = SPINLOCK_INITIALIZER;
+static struct proc *pid_table[PID_MAX-PID_MIN+1];
+static pid_t next_pid = PID_MIN;
+
+static void find_next_pid(){
+	/* Find next free PID */
+	for (int i = 0; i < PID_MAX-PID_MIN+1; i++) {
+		if (pid_table[(next_pid-PID_MIN+i) % (PID_MAX-PID_MIN+1)] == NULL) {
+			next_pid = ((next_pid-PID_MIN+i) % (PID_MAX-PID_MIN+1)) + PID_MIN;
+			break;
+		}
+	}
+}
 
 /*
  * Create a proc structure.
@@ -62,6 +77,14 @@ struct proc *
 proc_create(const char *name)
 {
 	struct proc *proc;
+
+	#if OPT_PROCWAIT
+	spinlock_acquire(&pid_lock);
+	if (next_pid > PID_MAX) {
+		return NULL;
+	}
+	spinlock_release(&pid_lock);
+	#endif
 
 	proc = kmalloc(sizeof(*proc));
 	if (proc == NULL) {
@@ -81,6 +104,31 @@ proc_create(const char *name)
 
 	/* VFS fields */
 	proc->p_cwd = NULL;
+
+	#if OPT_PROCWAIT
+
+	proc->p_cv = cv_create("proc_cv");
+	if (proc->p_cv == NULL) {
+		kfree(proc->p_name);
+		kfree(proc);
+		return NULL;
+	}
+	proc->p_lock_cv = lock_create("proc_lock_cv");
+	if (proc->p_lock_cv == NULL) {
+		cv_destroy(proc->p_cv);
+		kfree(proc->p_name);
+		kfree(proc);
+		return NULL;
+	}
+	proc->p_pid = next_pid;
+	proc->p_exitstatus = -1;
+
+	spinlock_acquire(&pid_lock);
+	pid_table[next_pid-PID_MIN] = proc;
+	find_next_pid();
+	spinlock_release(&pid_lock);
+
+	#endif
 
 	return proc;
 }
@@ -164,6 +212,12 @@ proc_destroy(struct proc *proc)
 		}
 		as_destroy(as);
 	}
+
+	#if OPT_PROCWAIT
+	cv_destroy(proc->p_cv);
+	lock_destroy(proc->p_lock_cv);
+	pid_table[proc->p_pid-PID_MIN] = NULL;
+	#endif
 
 	KASSERT(proc->p_numthreads == 0);
 	spinlock_cleanup(&proc->p_lock);
@@ -318,3 +372,40 @@ proc_setas(struct addrspace *newas)
 	spinlock_release(&proc->p_lock);
 	return oldas;
 }
+
+
+#if OPT_PROCWAIT
+/*
+ * Wait for a process to terminate.
+ */
+int proc_wait(struct proc *p){
+	int res;
+	
+	lock_acquire(p->p_lock_cv);
+	while(p->p_exitstatus==-1){
+		cv_wait(p->p_cv, p->p_lock_cv);
+	}
+	lock_release(p->p_lock_cv);
+
+	res = p->p_exitstatus;
+
+	proc_destroy(p);
+
+	return res;
+}
+/*
+ * Returns the proc's pid
+ */
+pid_t proc_getpid(struct proc *p){
+	return p->p_pid;
+}
+/*
+ * Returns the proc given the pid
+ */
+struct proc * proc_find(pid_t pid){
+	KASSERT(pid >= PID_MIN && pid <= PID_MAX);
+	return pid_table[pid-PID_MIN];
+}
+
+
+#endif

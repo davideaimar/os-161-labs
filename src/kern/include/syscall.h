@@ -32,7 +32,10 @@
 
 
 #include <cdefs.h> /* for __DEAD */
-#include "opt-syscalls.h"
+#include <proc.h>
+#include <opt-syscalls.h>
+#include <opt-procwait.h>
+
 struct trapframe; /* from <machine/trapframe.h> */
 
 /*
@@ -65,5 +68,11 @@ int sys_write(int fd, userptr_t buf_ptr, size_t size);
 int sys_read(int fd, userptr_t buf_ptr, size_t size);
 void sys__exit(int status);
 #endif /* OPT_SYSCALLS */
+
+#if OPT_PROCWAIT
+int sys_waitpid(pid_t pid);
+pid_t sys_getpid(struct proc *p);
+int sys_fork(struct trapframe * tf, int * retval);
+#endif
 
 #endif /* _SYSCALL_H_ */

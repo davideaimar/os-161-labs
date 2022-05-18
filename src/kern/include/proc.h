@@ -37,6 +37,8 @@
  */
 
 #include <spinlock.h>
+#include <synch.h>
+#include <opt-procwait.h>
 
 struct addrspace;
 struct thread;
@@ -70,6 +72,13 @@ struct proc {
 	/* VFS */
 	struct vnode *p_cwd;		/* current working directory */
 
+	#if OPT_PROCWAIT
+	struct cv *p_cv;
+	struct lock *p_lock_cv;
+	int p_exitstatus;
+	pid_t p_pid;
+	#endif
+
 	/* add more material here as needed */
 };
 
@@ -96,6 +105,13 @@ struct addrspace *proc_getas(void);
 
 /* Change the address space of the current process, and return the old one. */
 struct addrspace *proc_setas(struct addrspace *);
+
+#if OPT_PROCWAIT
+/* Wait for a process to terminate. */
+int proc_wait(struct proc *proc);
+struct proc * proc_find(pid_t pid);
+pid_t proc_getpid(struct proc *p);
+#endif
 
 
 #endif /* _PROC_H_ */
