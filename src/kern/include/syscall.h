@@ -70,7 +70,7 @@ void sys__exit(int status);
 #endif /* OPT_SYSCALLS */
 
 #if OPT_PROCWAIT
-int sys_waitpid(pid_t pid);
+pid_t sys_waitpid(pid_t pid, userptr_t *status_ptr);
 pid_t sys_getpid(struct proc *p);
 int sys_fork(struct trapframe * tf, int * retval);
 #endif

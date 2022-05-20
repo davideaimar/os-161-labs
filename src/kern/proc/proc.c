@@ -106,14 +106,14 @@ proc_create(const char *name)
 	proc->p_cwd = NULL;
 
 	#if OPT_PROCWAIT
-
-	proc->p_cv = cv_create("proc_cv");
+	proc->p_waitcount = 0;
+	proc->p_cv = cv_create(name);
 	if (proc->p_cv == NULL) {
 		kfree(proc->p_name);
 		kfree(proc);
 		return NULL;
 	}
-	proc->p_lock_cv = lock_create("proc_lock_cv");
+	proc->p_lock_cv = lock_create(name);
 	if (proc->p_lock_cv == NULL) {
 		cv_destroy(proc->p_cv);
 		kfree(proc->p_name);
@@ -216,7 +216,9 @@ proc_destroy(struct proc *proc)
 	#if OPT_PROCWAIT
 	cv_destroy(proc->p_cv);
 	lock_destroy(proc->p_lock_cv);
+	spinlock_acquire(&pid_lock);
 	pid_table[proc->p_pid-PID_MIN] = NULL;
+	spinlock_release(&pid_lock);
 	#endif
 
 	KASSERT(proc->p_numthreads == 0);
@@ -380,6 +382,13 @@ proc_setas(struct addrspace *newas)
  */
 int proc_wait(struct proc *p){
 	int res;
+
+	KASSERT(p != NULL);
+	KASSERT(p != kproc);
+
+	spinlock_acquire(&p->p_lock);
+	p->p_waitcount++;
+	spinlock_release(&p->p_lock);
 	
 	lock_acquire(p->p_lock_cv);
 	while(p->p_exitstatus==-1){
@@ -387,9 +396,14 @@ int proc_wait(struct proc *p){
 	}
 	lock_release(p->p_lock_cv);
 
+	spinlock_acquire(&p->p_lock);
+	p->p_waitcount--;
+	spinlock_release(&p->p_lock);
+
 	res = p->p_exitstatus;
 
-	proc_destroy(p);
+	if (p->p_waitcount == 0)
+		proc_destroy(p);
 
 	return res;
 }
@@ -397,6 +411,7 @@ int proc_wait(struct proc *p){
  * Returns the proc's pid
  */
 pid_t proc_getpid(struct proc *p){
+	KASSERT(p != NULL);
 	return p->p_pid;
 }
 /*

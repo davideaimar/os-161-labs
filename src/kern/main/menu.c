@@ -90,9 +90,10 @@ cmd_progthread(void *ptr, unsigned long nargs)
 	strcpy(progname, args[0]);
 
 	result = runprogram(progname);
+	
 	if (result) {
-		kprintf("Running program %s failed: %s\n", args[0],
-			strerror(result));
+		kprintf("Running program %s failed: %s\n", args[0], strerror(result));
+		sys__exit(result);
 		return;
 	}
 
@@ -128,6 +129,7 @@ common_prog(int nargs, char **args)
 			proc /* new process */,
 			cmd_progthread /* thread function */,
 			args /* thread arg */, nargs /* thread arg */);
+	
 	if (result) {
 		kprintf("thread_fork failed: %s\n", strerror(result));
 		proc_destroy(proc);
@@ -140,8 +142,7 @@ common_prog(int nargs, char **args)
 	 */
 
 	#if OPT_PROCWAIT
-		//result = proc_wait(proc);
-		result = sys_waitpid(sys_getpid(proc));
+		sys_waitpid(sys_getpid(proc), (userptr_t*)(&result) );
 		kprintf("Process ended with status: %d\n", result);
 	#endif
 

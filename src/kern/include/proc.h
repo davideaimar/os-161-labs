@@ -77,6 +77,7 @@ struct proc {
 	struct lock *p_lock_cv;
 	int p_exitstatus;
 	pid_t p_pid;
+	uint8_t p_waitcount;
 	#endif
 
 	/* add more material here as needed */

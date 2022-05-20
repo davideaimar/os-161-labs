@@ -16,14 +16,17 @@ void sys__exit(int status) {
     struct proc *p = curproc;
     /* Detach thread */
     proc_remthread(curthread);
+    /* Set exit status */
+    p->p_exitstatus = status & 0xff;
 
     lock_acquire(p->p_lock_cv);
     /* Signal termination */
-    p->p_exitstatus = status;
-    cv_broadcast(p->p_cv, p->p_lock_cv);
+    cv_signal(p->p_cv, p->p_lock_cv);
     lock_release(p->p_lock_cv);
     
     #else
+    struct addrspace *as = proc_getas();
+    as_destroy(as);
     (void)status;
     #endif
 
@@ -34,24 +37,25 @@ void sys__exit(int status) {
 
 #if OPT_PROCWAIT
 /* Wait for a process to terminate. */
-int sys_waitpid(pid_t pid){
-	
+pid_t sys_waitpid(pid_t pid, userptr_t *status_ptr){
+	int ret_status;
     struct proc *p = proc_find(pid);
     
     if(p == NULL){
         return -1;
     }
 
-	return proc_wait(p);
+    ret_status = proc_wait(p);
+
+    if (status_ptr != NULL) {
+        *(int*)status_ptr = ret_status;
+    }
+
+    return pid;
 }
 
 /* get PID of current process. */
 pid_t sys_getpid(struct proc *p){
-    
-    if(p == NULL){
-        return -1;
-    }
-
 	return proc_getpid(p);
 }
 /* Fork the parent process */
