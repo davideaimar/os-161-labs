@@ -586,8 +586,8 @@ dumbvm_printstats(void){
 	kprintf("dumbvm: %d pages allocated\n", num_frames_allocated);
 	kprintf("dumbvm: %d pages free\n", num_frames_total - num_frames_allocated);
 	kprintf("dumbvm: %d pages were allocated before VM bootstrap\n", num_frames_init_allocated);
-	kprintf("dumbvm: %d history total allocated paged\n", tot_allocated_pages);
-	kprintf("dumbvm: %d history total de-llocated paged\n", tot_freed_pages);
+	kprintf("dumbvm: %d history total allocated pages\n", tot_allocated_pages);
+	kprintf("dumbvm: %d history total de-allocated pages\n", tot_freed_pages);
 	// calculate the pages for each line to print
 	size_t pages_per_line = 8;
 	if (num_frames_total > 64) {
