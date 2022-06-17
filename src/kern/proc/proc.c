@@ -51,9 +51,8 @@
 #include <limits.h>
 #include <opt-procwait.h>
 
-/*
- * The process for the kernel; this holds all the kernel-only threads.
- */
+
+// The process for the kernel; this holds all the kernel-only threads.
 struct proc *kproc;
 static struct spinlock pid_lock = SPINLOCK_INITIALIZER;
 static struct proc *pid_table[PID_MAX-PID_MIN+1];
@@ -128,6 +127,10 @@ proc_create(const char *name)
 	find_next_pid();
 	spinlock_release(&pid_lock);
 
+	#endif
+
+	#if OPT_IO
+		bzero(proc->p_filetable,OPEN_MAX*sizeof(struct openfile *));
 	#endif
 
 	return proc;
@@ -381,7 +384,7 @@ proc_setas(struct addrspace *newas)
  * Wait for a process to terminate.
  */
 int proc_wait(struct proc *p){
-	int res;
+	int res, destroy;
 
 	KASSERT(p != NULL);
 	KASSERT(p != kproc);
@@ -398,11 +401,11 @@ int proc_wait(struct proc *p){
 
 	spinlock_acquire(&p->p_lock);
 	p->p_waitcount--;
+	destroy = p->p_waitcount == 0;
+	res = p->p_exitstatus;
 	spinlock_release(&p->p_lock);
 
-	res = p->p_exitstatus;
-
-	if (p->p_waitcount == 0)
+	if (destroy)
 		proc_destroy(p);
 
 	return res;

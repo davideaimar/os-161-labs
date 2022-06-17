@@ -35,6 +35,7 @@
 #include <proc.h>
 #include <opt-syscalls.h>
 #include <opt-procwait.h>
+#include <opt-io.h>
 
 struct trapframe; /* from <machine/trapframe.h> */
 
@@ -73,6 +74,18 @@ void sys__exit(int status);
 pid_t sys_waitpid(pid_t pid, userptr_t *status_ptr);
 pid_t sys_getpid(struct proc *p);
 int sys_fork(struct trapframe * tf, int * retval);
+#endif
+
+#if OPT_IO
+struct openfile {
+    struct vnode *of_vn;
+    size_t of_offset;
+    size_t of_ref_count;
+};
+size_t file_read(int fd, userptr_t buf_ptr, size_t size);
+size_t file_write(int fd, userptr_t buf_ptr, size_t size);
+int sys_open(userptr_t filename, int flags, mode_t mode, size_t *ret_fd);
+int sys_close(int filehandle);
 #endif
 
 #endif /* _SYSCALL_H_ */

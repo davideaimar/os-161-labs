@@ -37,8 +37,10 @@
  */
 
 #include <spinlock.h>
+#include <limits.h>
 #include <synch.h>
 #include <opt-procwait.h>
+#include <opt-io.h>
 
 struct addrspace;
 struct thread;
@@ -78,6 +80,10 @@ struct proc {
 	int p_exitstatus;
 	pid_t p_pid;
 	uint8_t p_waitcount;
+	#endif
+
+	#if OPT_IO
+	struct openfile *p_filetable[OPEN_MAX];
 	#endif
 
 	/* add more material here as needed */

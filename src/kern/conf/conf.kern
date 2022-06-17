@@ -459,3 +459,7 @@ defoption locks
 defoption condvars
 
 defoption procwait
+
+defoption io
+
+defoption args

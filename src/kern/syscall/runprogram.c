@@ -44,6 +44,10 @@
 #include <vfs.h>
 #include <syscall.h>
 #include <test.h>
+#if OPT_IO
+#include <copyinout.h>
+#include <opt-args.h>
+#endif
 
 /*
  * Load program "progname" and start running it in usermode.
@@ -52,12 +56,15 @@
  * Calls vfs_open on progname and thus may destroy it.
  */
 int
-runprogram(char *progname)
+runprogram(char *progname, char **args, int nargs)
 {
 	struct addrspace *as;
 	struct vnode *v;
 	vaddr_t entrypoint, stackptr;
 	int result;
+	#if OPT_ARGS
+	vaddr_t stackptr_orig;
+	#endif
 
 	/* Open the file. */
 	result = vfs_open(progname, O_RDONLY, 0, &v);
@@ -97,10 +104,49 @@ runprogram(char *progname)
 		return result;
 	}
 
+	#if OPT_ARGS
+	/*
+		Stack:
+			pointer to argv[0] (*argv[0])
+			...
+			pointer to argv[argc-1] (*argv[argc-1])
+			pointer to NULL 
+			argv[0]
+			...
+			argv[argc-1]
+			pointer to argv vector (**argv)
+			argc
+	*/
+	stackptr -= (vaddr_t)((nargs+1) * sizeof(char*)); // leave space for argv vector of pointers
+	stackptr_orig = stackptr; // save original stack pointer
+	/* Copy arguments to the stack */
+	for (int i = 0; i < nargs; i++) {
+		// remember that stackptr is decrementing, so we need to decrement the size of the argument before we copy it
+		char *arg = args[i]; // get arg to pass to the stack
+		int arglen = strlen(arg) + 1; // get length of arg
+		stackptr -= arglen; // leave space for arg
+		// copy the arg to the stack
+		result = copyoutstr(arg, (userptr_t)stackptr, arglen, (size_t *)NULL);
+		if (result) return EINVAL;
+		// copy the pointer to the just copied arg on the (shifted) top of the stack
+		result = copyout(&stackptr, (userptr_t)stackptr_orig + i*sizeof(char *), sizeof(char *));
+		if (result) return EINVAL;
+	}
+	#else
+	(void)nargs;
+	(void)args;
+	#endif
+
 	/* Warp to user mode. */
+	#if OPT_ARGS
+	enter_new_process(nargs /*argc*/, (userptr_t)stackptr_orig /*userspace addr of argv*/,
+			  NULL /*userspace addr of environment*/,
+			  stackptr, entrypoint);
+	#else
 	enter_new_process(0 /*argc*/, NULL /*userspace addr of argv*/,
 			  NULL /*userspace addr of environment*/,
 			  stackptr, entrypoint);
+	#endif
 
 	/* enter_new_process does not return. */
 	panic("enter_new_process returned\n");
